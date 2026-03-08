@@ -23,7 +23,7 @@ class ACInfinityPortSwitch(CoordinatorEntity, SwitchEntity):
 
         self._port = port
         self._attr_name = f"AC Infinity Port {port}"
-        self._attr_unique_id = f"{coordinator.mac}_port_{port}"
+        self._attr_unique_id = f"{coordinator.address}_port_{port}"
         self._attr_has_entity_name = True
 
     # -----------------------
