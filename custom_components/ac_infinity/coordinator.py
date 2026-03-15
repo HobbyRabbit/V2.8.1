@@ -1,16 +1,16 @@
-"""AC Infinity coordinator."""
+"""AC Infinity BLE Coordinator."""
 
 from __future__ import annotations
 
 import logging
 from datetime import timedelta
 
+from bleak import BleakClient
+
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
     UpdateFailed,
 )
-
-from bleak import BleakClient
 
 from .const import DOMAIN
 
@@ -18,6 +18,7 @@ _LOGGER = logging.getLogger(__name__)
 
 UPDATE_INTERVAL = timedelta(seconds=10)
 
+# BLE UUIDs
 SERVICE_UUID = "0000fff0-0000-1000-8000-00805f9b34fb"
 NOTIFY_UUID = "0000fff1-0000-1000-8000-00805f9b34fb"
 
@@ -25,63 +26,69 @@ NOTIFY_UUID = "0000fff1-0000-1000-8000-00805f9b34fb"
 class ACInfinityCoordinator(DataUpdateCoordinator):
     """Coordinator for AC Infinity controller."""
 
-    def __init__(self, hass, mac):
+    def __init__(self, hass, mac: str, name: str):
+        """Initialize."""
         super().__init__(
             hass,
             _LOGGER,
-            name=DOMAIN,
+            name=name,
             update_interval=UPDATE_INTERVAL,
         )
 
         self.mac = mac
+        self.name = name
         self.client = BleakClient(mac)
 
+        # Data store
         self.data = {
             "temperature": None,
             "humidity": None,
             "ports": {i: False for i in range(1, 9)},
         }
 
-    async def _async_update_data(self):
-        """Fetch BLE data."""
-
-        try:
-            if not self.client.is_connected:
-                await self.client.connect()
+    async def _ensure_connected(self):
+        """Ensure BLE connection."""
+        if not self.client.is_connected:
+            _LOGGER.debug("Connecting to AC Infinity %s", self.mac)
+            await self.client.connect()
 
             await self.client.start_notify(
                 NOTIFY_UUID,
                 self._handle_notification,
             )
 
+    async def _async_update_data(self):
+        """Fetch data from device."""
+        try:
+            await self._ensure_connected()
+            return self.data
+
         except Exception as err:
             raise UpdateFailed(f"BLE error: {err}") from err
 
-        return self.data
-
-    def _handle_notification(self, sender, data):
-        """Parse BLE packet."""
-
+    def _handle_notification(self, sender: int, data: bytearray):
+        """Handle BLE notification packets."""
         try:
-            if len(data) < 20:
+
+            if len(data) < 16:
                 return
 
-            # HEADER CHECK
+            # Validate packet header
             if data[0:5] != b"JGQUA":
                 return
 
-            # ---- temperature decode (V2.5 method)
+            # ---- Temperature decode
             temp_raw = (data[9] << 8) | data[10]
             temperature = round(temp_raw / 36, 1)
 
-            # ---- humidity decode (V2.5 method)
+            # ---- Humidity decode
             humidity_raw = data[11]
             humidity = int(humidity_raw / 3)
 
             self.data["temperature"] = temperature
             self.data["humidity"] = humidity
 
-            # ---- port state (V2.4 structure)
+            # ---- Port state decode
             port = data[13]
             state = data[15]
 
@@ -89,7 +96,7 @@ class ACInfinityCoordinator(DataUpdateCoordinator):
                 self.data["ports"][port] = bool(state)
 
             _LOGGER.debug(
-                "Packet decoded: temp=%s humidity=%s port=%s state=%s",
+                "AC Infinity packet decoded | Temp=%sF Humidity=%s%% Port=%s State=%s",
                 temperature,
                 humidity,
                 port,
@@ -97,4 +104,4 @@ class ACInfinityCoordinator(DataUpdateCoordinator):
             )
 
         except Exception as err:
-            _LOGGER.error("Packet parse error: %s", err)
+            _LOGGER.error("AC Infinity packet parse error: %s", err)
