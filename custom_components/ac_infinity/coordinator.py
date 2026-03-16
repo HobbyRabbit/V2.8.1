@@ -6,6 +6,7 @@ import logging
 from datetime import timedelta
 
 from bleak import BleakClient
+from bleak_retry_connector import establish_connection
 
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
@@ -26,7 +27,7 @@ class ACInfinityCoordinator(DataUpdateCoordinator):
     """Coordinator for AC Infinity controller."""
 
     def __init__(self, hass, mac: str, name: str):
-        """Initialize coordinator."""
+        """Initialize."""
         super().__init__(
             hass,
             _LOGGER,
@@ -47,15 +48,18 @@ class ACInfinityCoordinator(DataUpdateCoordinator):
         }
 
     async def _ensure_connected(self):
-        """Ensure BLE connection."""
+        """Ensure BLE connection using HA-compatible connector."""
         try:
             if self.client and self.client.is_connected:
                 return
 
             _LOGGER.debug("Connecting to AC Infinity %s", self.mac)
 
-            self.client = BleakClient(self.mac)
-            await self.client.connect()
+            self.client = await establish_connection(
+                BleakClient,
+                self.mac,
+                self.name,
+            )
 
             await self.client.start_notify(
                 NOTIFY_UUID,
@@ -68,37 +72,34 @@ class ACInfinityCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(f"BLE connect failed: {err}") from err
 
     async def _async_update_data(self):
-        """Update data."""
+        """Update coordinator data."""
         try:
             await self._ensure_connected()
             return self.data
-
         except Exception as err:
             raise UpdateFailed(f"Update failed: {err}") from err
 
     def _handle_notification(self, sender: int, data: bytearray):
         """Handle BLE notification packets."""
         try:
-
             if len(data) < 16:
                 return
 
-            # Packet signature
             if data[0:5] != b"JGQUA":
                 return
 
-            # ---- Temperature
+            # Temperature
             temp_raw = (data[9] << 8) | data[10]
             temperature = round(temp_raw / 36, 1)
 
-            # ---- Humidity
+            # Humidity
             humidity_raw = data[11]
             humidity = int(humidity_raw / 3)
 
             self.data["temperature"] = temperature
             self.data["humidity"] = humidity
 
-            # ---- Port
+            # Port state
             port = data[13]
             state = data[15]
 
@@ -106,7 +107,7 @@ class ACInfinityCoordinator(DataUpdateCoordinator):
                 self.data["ports"][port] = bool(state)
 
             _LOGGER.debug(
-                "AC Infinity packet decoded | Temp=%sF Humidity=%s%% Port=%s State=%s",
+                "AC Infinity packet | Temp=%sF Humidity=%s%% Port=%s State=%s",
                 temperature,
                 humidity,
                 port,
