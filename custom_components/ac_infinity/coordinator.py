@@ -1,4 +1,4 @@
-"""AC Infinity BLE Coordinator."""
+"""AC Infinity BLE Coordinator V6.5 (Stable)."""
 
 from __future__ import annotations
 
@@ -22,10 +22,10 @@ NOTIFY_UUID = "0000fff1-0000-1000-8000-00805f9b34fb"
 
 
 class ACInfinityCoordinator(DataUpdateCoordinator):
-    """Coordinator for AC Infinity controller."""
+    """AC Infinity BLE data coordinator."""
 
     def __init__(self, hass, mac: str, name: str):
-        """Initialize coordinator."""
+        """Initialize."""
         super().__init__(
             hass,
             _LOGGER,
@@ -33,12 +33,12 @@ class ACInfinityCoordinator(DataUpdateCoordinator):
             update_interval=UPDATE_INTERVAL,
         )
 
-        self.hass = hass
         self.mac = mac
         self.name = name
-
         self.client: BleakClient | None = None
+        self._notifying = False
 
+        # Data model (clean + consistent)
         self.data = {
             "temperature": None,
             "humidity": None,
@@ -46,12 +46,12 @@ class ACInfinityCoordinator(DataUpdateCoordinator):
         }
 
     async def _ensure_connected(self):
-        """Ensure BLE connection."""
+        """Ensure BLE connection (HA safe)."""
         try:
             if self.client and self.client.is_connected:
                 return
 
-            _LOGGER.debug("Connecting to AC Infinity %s", self.mac)
+            _LOGGER.debug("Connecting to %s", self.mac)
 
             self.client = await establish_connection(
                 BleakClient,
@@ -59,21 +59,21 @@ class ACInfinityCoordinator(DataUpdateCoordinator):
                 self.name,
             )
 
-            await self.client.start_notify(
-                NOTIFY_UUID,
-                self._handle_notification,
-            )
+            # Start notify only once
+            if not self._notifying:
+                await self.client.start_notify(
+                    NOTIFY_UUID,
+                    self._handle_notification,
+                )
+                self._notifying = True
 
-            _LOGGER.debug("Connected to AC Infinity %s", self.mac)
+            _LOGGER.debug("Connected + notifications started")
 
         except Exception as err:
-
-            # bleak-retry-connector sometimes returns string errors
+            # 🔧 Fix for 'str has no attribute details'
             if isinstance(err, str):
-                _LOGGER.error("BLE connect returned string error: %s", err)
                 raise UpdateFailed(f"BLE connect failed: {err}")
-
-            raise UpdateFailed(f"BLE connect failed: {err}") from err
+            raise UpdateFailed("BLE connect failed") from err
 
     async def _async_update_data(self):
         """Fetch latest data."""
@@ -84,28 +84,37 @@ class ACInfinityCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(f"Update failed: {err}") from err
 
     def _handle_notification(self, sender: int, data: bytearray):
-        """Handle BLE notification packets."""
+        """Parse BLE packets."""
         try:
-
             if len(data) < 16:
                 return
 
-            # Packet signature used by AC Infinity
+            # Packet signature check
             if data[0:5] != b"JGQUA":
                 return
 
-            # ---- Temperature decode
+            # ---------------------------
+            # Temperature (F)
+            # ---------------------------
             temp_raw = (data[9] << 8) | data[10]
             temperature = round(temp_raw / 36, 1)
 
-            # ---- Humidity decode
+            # ---------------------------
+            # Humidity (%)
+            # ---------------------------
             humidity_raw = data[11]
             humidity = int(humidity_raw / 3)
 
-            self.data["temperature"] = temperature
-            self.data["humidity"] = humidity
+            # Update only if valid
+            if 0 < temperature < 150:
+                self.data["temperature"] = temperature
 
-            # ---- Port update
+            if 0 <= humidity <= 100:
+                self.data["humidity"] = humidity
+
+            # ---------------------------
+            # Port updates
+            # ---------------------------
             port = data[13]
             state = data[15]
 
@@ -113,12 +122,13 @@ class ACInfinityCoordinator(DataUpdateCoordinator):
                 self.data["ports"][port] = bool(state)
 
             _LOGGER.debug(
-                "AC Infinity packet decoded | Temp=%sF Humidity=%s%% Port=%s State=%s",
-                temperature,
-                humidity,
+                "Packet | Temp=%sF Hum=%s%% Port=%s State=%s Raw=%s",
+                self.data["temperature"],
+                self.data["humidity"],
                 port,
                 state,
+                data.hex(),
             )
 
         except Exception as err:
-            _LOGGER.error("AC Infinity packet parse error: %s", err)
+            _LOGGER.error("Packet parse error: %s", err)
