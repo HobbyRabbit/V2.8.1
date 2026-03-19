@@ -1,16 +1,12 @@
 {
   "domain": "ac_infinity",
   "name": "AC Infinity",
-  "version": "2.4.1",
+  "version": "7.1",
   "config_flow": true,
-  "bluetooth": [
-    {
-      "manufacturer_id": 2306
-    }
-  ],
   "requirements": [
     "bleak>=0.22.0",
-    "bleak-retry-connector>=3.5.0"
+    "bleak-retry-connector>=3.3.0"
   ],
+  "dependencies": ["bluetooth"],
   "codeowners": []
 }
