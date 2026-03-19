@@ -1,45 +1,40 @@
-from __future__ import annotations
-
 from homeassistant.components.sensor import SensorEntity
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
-
-from .coordinator import ACInfinityCoordinator
-from . import DOMAIN
+from .const import DOMAIN
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-
-    coordinator: ACInfinityCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = hass.data[DOMAIN][entry.entry_id]
 
     entities = [
-        ACInfinityTemperatureSensor(coordinator),
+        ACInfinityTempSensor(coordinator),
         ACInfinityHumiditySensor(coordinator),
     ]
 
     async_add_entities(entities)
 
 
-class ACInfinityTemperatureSensor(CoordinatorEntity, SensorEntity):
-
-    _attr_name = "AC Infinity Temperature"
-    _attr_native_unit_of_measurement = "°C"
-
-    def __init__(self, coordinator):
-        super().__init__(coordinator)
-
-    @property
-    def native_value(self):
-        return self.coordinator.data.get("temperature")
-
-
-class ACInfinityHumiditySensor(CoordinatorEntity, SensorEntity):
-
-    _attr_name = "AC Infinity Humidity"
-    _attr_native_unit_of_measurement = "%"
-
-    def __init__(self, coordinator):
-        super().__init__(coordinator)
+class BaseSensor(SensorEntity):
+    def __init__(self, coordinator, key, name):
+        self.coordinator = coordinator
+        self._key = key
+        self._attr_name = f"{coordinator.name} {name}"
+        self._attr_unique_id = f"{coordinator.mac}_{key}"
 
     @property
     def native_value(self):
-        return self.coordinator.data.get("humidity")
+        return self.coordinator.data.get(self._key)
+
+    async def async_update(self):
+        await self.coordinator.async_request_refresh()
+
+
+class ACInfinityTempSensor(BaseSensor):
+    def __init__(self, coordinator):
+        super().__init__(coordinator, "temperature", "Temperature")
+        self._attr_native_unit_of_measurement = "°F"
+
+
+class ACInfinityHumiditySensor(BaseSensor):
+    def __init__(self, coordinator):
+        super().__init__(coordinator, "humidity", "Humidity")
+        self._attr_native_unit_of_measurement = "%"
