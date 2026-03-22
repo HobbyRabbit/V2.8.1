@@ -1,40 +1,34 @@
-from homeassistant.components.sensor import SensorEntity
-from .const import DOMAIN
+from homeassistant.components.switch import SwitchEntity
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
+from .const import DOMAIN, PORTS
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
     coordinator = hass.data[DOMAIN][entry.entry_id]
 
     entities = [
-        ACInfinityTempSensor(coordinator),
-        ACInfinityHumiditySensor(coordinator),
+        PortSwitch(coordinator, port)
+        for port in PORTS
     ]
 
     async_add_entities(entities)
 
 
-class BaseSensor(SensorEntity):
-    def __init__(self, coordinator, key, name):
-        self.coordinator = coordinator
-        self._key = key
-        self._attr_name = f"{coordinator.name} {name}"
-        self._attr_unique_id = f"{coordinator.mac}_{key}"
+class PortSwitch(CoordinatorEntity, SwitchEntity):
+    def __init__(self, coordinator, port):
+        super().__init__(coordinator)
+        self.port = port
+        self._attr_name = f"{coordinator.name} Port {port}"
+        self._attr_unique_id = f"{coordinator.mac}_port_{port}"
 
     @property
-    def native_value(self):
-        return self.coordinator.data.get(self._key)
+    def is_on(self):
+        return self.coordinator.data["ports"].get(self.port, False)
 
-    async def async_update(self):
-        await self.coordinator.async_request_refresh()
+    async def async_turn_on(self):
+        # control added later (matches V2.5 separation)
+        pass
 
-
-class ACInfinityTempSensor(BaseSensor):
-    def __init__(self, coordinator):
-        super().__init__(coordinator, "temperature", "Temperature")
-        self._attr_native_unit_of_measurement = "°F"
-
-
-class ACInfinityHumiditySensor(BaseSensor):
-    def __init__(self, coordinator):
-        super().__init__(coordinator, "humidity", "Humidity")
-        self._attr_native_unit_of_measurement = "%"
+    async def async_turn_off(self):
+        pass
